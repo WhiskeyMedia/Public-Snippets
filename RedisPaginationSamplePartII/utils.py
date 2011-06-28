@@ -1,3 +1,4 @@
+import time
 from django.contrib.contenttypes.models import ContentType
 
 redis = path_to_your_redis_client
@@ -24,18 +25,19 @@ def paginate_list(page=1, results_per_page=10, storage_key):
       @storage_key => required string that points to our object list
                in redis.
     """
-    bottom = (page - 1) * results_per_page
-    top = bottom + results_per_page - 1
-    count = redis.llen()
-    if top >= count:
-        top = count - 1
+    # Get the number of results in redis that are valid
+    max_score = int(time.time())
+    count = redis.zcount(storage_key, min=0, max=max_score)
 
-    # Get the paginated object list out of redis
-    # The list should look like: ["ct_id:obj_id", "ct_id:obj_id", "ct_id:obj_id"...]
-    object_list = redis.zrrange(storage_key, bottom, top)
+    # Calculate the 'start' index
+    start = count - (results_per_page * page)
+    if start < 0:
+        start = 0
 
-    # Factory and return each object
-    return [factory_object(ct_obj_string) for ct_obj_string in object_list]
+    # Fetch a slice of the results for the page given
+    redis_results = redis.zrangebyscore(storage_key, min=0, max=max_score, start=start, num=results_per_page)
+    redis_results.reverse()
+    return [factory_object(ct_obj_string) for ct_obj_string in redis_results]
 
 def build_value(instance):
     """
